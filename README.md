@@ -7,3 +7,4 @@ linux5.9.9源码分析
 * 4 [从内核看文件描述符传递的实现（基于5.9.9）](https://zhuanlan.zhihu.com/p/381683155)
 * 5 [从内核看Unix域的实现（基于5.9.9）](https://zhuanlan.zhihu.com/p/382014871)
 * 6 [从内核看socketpair的实现（基于5.9.9）](https://zhuanlan.zhihu.com/p/382030962)
+* 7 [从内核看eventfd的实现（基于5.9.9）](https://zhuanlan.zhihu.com/p/383395277)
