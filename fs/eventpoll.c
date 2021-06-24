@@ -143,6 +143,7 @@ struct epitem {
 	};
 
 	/* List header used to link this structure to the eventpoll ready list */
+	// 用于插入就绪队列
 	struct list_head rdllink;
 
 	/*
@@ -152,15 +153,19 @@ struct epitem {
 	struct epitem *next;
 
 	/* The file descriptor information this item refers to */
+	// 关联的fd和file
 	struct epoll_filefd ffd;
 
 	/* Number of active wait queue attached to poll operations */
+	// 等待该文件描述符的进程数
 	int nwait;
 
 	/* List containing poll wait queues */
+	// 有多少个节点关联到该epitem
 	struct list_head pwqlist;
 
 	/* The "container" of this item */
+	// 所属epoll
 	struct eventpoll *ep;
 
 	/* List header used to link this item to the "struct file" items list */
@@ -170,6 +175,7 @@ struct epitem {
 	struct wakeup_source __rcu *ws;
 
 	/* The structure that describe the interested events and the source fd */
+	// 订阅的事件
 	struct epoll_event event;
 };
 
@@ -188,18 +194,22 @@ struct eventpoll {
 	struct mutex mtx;
 
 	/* Wait queue used by sys_epoll_wait() */
+	// 阻塞在该epoll的进程队列
 	wait_queue_head_t wq;
 
 	/* Wait queue used by file->poll() */
+	// 当epoll被另一个epoll监听时需要使用poll_wait记录阻塞在该epoll的队列
 	wait_queue_head_t poll_wait;
 
 	/* List of ready file descriptors */
+	// 就绪队列
 	struct list_head rdllist;
 
 	/* Lock which protects rdllist and ovflist */
 	rwlock_t lock;
 
 	/* RB tree root used to store monitored fd structs */
+	// 红黑树根节点
 	struct rb_root_cached rbr;
 
 	/*
@@ -207,14 +217,16 @@ struct eventpoll {
 	 * happened while transferring ready events to userspace w/out
 	 * holding ->lock.
 	 */
+	// 记录epitem的单链表
 	struct epitem *ovflist;
 
 	/* wakeup_source used when ep_scan_ready_list is running */
 	struct wakeup_source *ws;
 
 	/* The user that created the eventpoll descriptor */
+	// 创建该epoll的用户信息
 	struct user_struct *user;
-
+	// epoll对应的file
 	struct file *file;
 
 	/* used to optimize loop detection check */
@@ -237,12 +249,14 @@ struct eppoll_entry {
 	struct list_head llink;
 
 	/* The "base" pointer is set to the container "struct epitem" */
+	// 关联的epitem
 	struct epitem *base;
 
 	/*
 	 * Wait queue item that will be linked to the target file wait
 	 * queue head.
 	 */
+	// 插入资源等待队列的节点
 	wait_queue_entry_t wait;
 
 	/* The wait queue head that linked the "wait" wait queue item */
@@ -312,13 +326,14 @@ struct ctl_table epoll_table[] = {
 #endif /* CONFIG_SYSCTL */
 
 static const struct file_operations eventpoll_fops;
-
+// file是底层是epoll
 static inline int is_file_epoll(struct file *f)
 {
 	return f->f_op == &eventpoll_fops;
 }
 
 /* Setup the structure that is used as key for the RB tree */
+// 保存fd和file
 static inline void ep_set_ffd(struct epoll_filefd *ffd,
 			      struct file *file, int fd)
 {
@@ -327,6 +342,7 @@ static inline void ep_set_ffd(struct epoll_filefd *ffd,
 }
 
 /* Compare RB tree keys */
+// 用于插入红黑树的比较函数
 static inline int ep_cmp_ffd(struct epoll_filefd *p1,
 			     struct epoll_filefd *p2)
 {
@@ -335,11 +351,12 @@ static inline int ep_cmp_ffd(struct epoll_filefd *p1,
 }
 
 /* Tells us if the item is currently linked */
+// 节点是否存在某个队列中
 static inline int ep_is_linked(struct epitem *epi)
 {
 	return !list_empty(&epi->rdllink);
 }
-
+// 通过结构体字段找结构体首地址
 static inline struct eppoll_entry *ep_pwq_from_wait(wait_queue_entry_t *p)
 {
 	return container_of(p, struct eppoll_entry, wait);
@@ -352,6 +369,7 @@ static inline struct epitem *ep_item_from_wait(wait_queue_entry_t *p)
 }
 
 /* Get the "struct epitem" from an epoll queue wrapper */
+// 根据结构体字段拿到结构体首地址，再取得某个字段
 static inline struct epitem *ep_item_from_epqueue(poll_table *p)
 {
 	return container_of(p, struct ep_pqueue, pt)->epi;
@@ -372,8 +390,10 @@ static void ep_nested_calls_init(struct nested_calls *ncalls)
  * Returns: Returns a value different than zero if ready events are available,
  *          or zero otherwise.
  */
+// 是否有就绪节点
 static inline int ep_events_available(struct eventpoll *ep)
 {
+	// 队列非空并且目前有在被监听的节点（ovflist记录了所有节点）
 	return !list_empty_careful(&ep->rdllist) ||
 		READ_ONCE(ep->ovflist) != EP_UNACTIVE_PTR;
 }
@@ -585,14 +605,14 @@ static void ep_poll_safewake(struct eventpoll *ep, struct epitem *epi)
 }
 
 #else
-
+// 回调监听该epoll的epoll的回调
 static void ep_poll_safewake(struct eventpoll *ep, struct epitem *epi)
 {
 	wake_up_poll(&ep->poll_wait, EPOLLIN);
 }
 
 #endif
-
+// 把head对应的节点移出eppoll_entry的队列
 static void ep_remove_wait_queue(struct eppoll_entry *pwq)
 {
 	wait_queue_head_t *whead;
@@ -702,6 +722,7 @@ static __poll_t ep_scan_ready_list(struct eventpoll *ep,
 	 * in a lockless way.
 	 */
 	write_lock_irq(&ep->lock);
+	// 把就绪队列移到txlist
 	list_splice_init(&ep->rdllist, &txlist);
 	WRITE_ONCE(ep->ovflist, NULL);
 	write_unlock_irq(&ep->lock);
@@ -779,7 +800,7 @@ static int ep_remove(struct eventpoll *ep, struct epitem *epi)
 	spin_lock(&file->f_lock);
 	list_del_rcu(&epi->fllink);
 	spin_unlock(&file->f_lock);
-
+	// 移出红黑树
 	rb_erase_cached(&epi->rbn, &ep->rbr);
 
 	write_lock_irq(&ep->lock);
@@ -796,7 +817,7 @@ static int ep_remove(struct eventpoll *ep, struct epitem *epi)
 	 * use of the rbn field.
 	 */
 	call_rcu(&epi->rcu, epi_rcu_free);
-
+	// 监听数减一
 	atomic_long_dec(&ep->user->epoll_watches);
 
 	return 0;
@@ -881,10 +902,13 @@ static __poll_t ep_item_poll(const struct epitem *epi, poll_table *pt,
 	bool locked;
 
 	pt->_key = epi->event.events;
+	// 不是epoll，则执行钩子函数poll
 	if (!is_file_epoll(epi->ffd.file))
 		return vfs_poll(epi->ffd.file, pt) & epi->event.events;
-
+	// 在epoll里监听另一个epoll，即epitem的fd是另一个epoll对应的fd
+	// 是epoll则首先取得核心数据结构eventpoll
 	ep = epi->ffd.file->private_data;
+	// 执行pt中的函数
 	poll_wait(epi->ffd.file, &ep->poll_wait, pt);
 	locked = pt && (pt->_qproc == ep_ptable_queue_proc);
 
@@ -1002,7 +1026,7 @@ void eventpoll_release_file(struct file *file)
 	}
 	mutex_unlock(&epmutex);
 }
-
+// 分配一个eventpoll
 static int ep_alloc(struct eventpoll **pep)
 {
 	int error;
@@ -1201,11 +1225,15 @@ static inline bool chain_epi_lockless(struct epitem *epi)
  * queues are used should be detected accordingly.  This is detected using
  * cmpxchg() operation.
  */
+// 条件满足时，具体资源回调
 static int ep_poll_callback(wait_queue_entry_t *wait, unsigned mode, int sync, void *key)
 {
 	int pwake = 0;
+	// 拿到wait关联的epitem
 	struct epitem *epi = ep_item_from_wait(wait);
+	// 再拿到epitem关联的epoll
 	struct eventpoll *ep = epi->ep;
+	// 触发的事件
 	__poll_t pollflags = key_to_poll(key);
 	unsigned long flags;
 	int ewake = 0;
@@ -1251,11 +1279,15 @@ static int ep_poll_callback(wait_queue_entry_t *wait, unsigned mode, int sync, v
 	 * Wake up ( if active ) both the eventpoll wait list and the ->poll()
 	 * wait list.
 	 */
+	// 唤醒阻塞到epoll的队列
 	if (waitqueue_active(&ep->wq)) {
 		if ((epi->event.events & EPOLLEXCLUSIVE) &&
 					!(pollflags & POLLFREE)) {
+			// 触发的事件
 			switch (pollflags & EPOLLINOUT_BITS) {
+			// 触发了可读
 			case EPOLLIN:
+				// 并且订阅了可读，则需要唤醒
 				if (epi->event.events & EPOLLIN)
 					ewake = 1;
 				break;
@@ -1268,8 +1300,10 @@ static int ep_poll_callback(wait_queue_entry_t *wait, unsigned mode, int sync, v
 				break;
 			}
 		}
+		// 唤醒阻塞在epoll的进程
 		wake_up(&ep->wq);
 	}
+	// 是否有epoll在监听当epoll
 	if (waitqueue_active(&ep->poll_wait))
 		pwake++;
 
@@ -1306,20 +1340,28 @@ out_unlock:
  * This is the callback that is used to add our wait queue to the
  * target file wakeup lists.
  */
+// 具体的资源方调用
 static void ep_ptable_queue_proc(struct file *file, wait_queue_head_t *whead,
 				 poll_table *pt)
-{
+{	
+	// 获取pt关联的epitem
 	struct epitem *epi = ep_item_from_epqueue(pt);
+	// 分配一个eppoll_entry
 	struct eppoll_entry *pwq;
 
 	if (epi->nwait >= 0 && (pwq = kmem_cache_alloc(pwq_cache, GFP_KERNEL))) {
+		// 初始化pwq
 		init_waitqueue_func_entry(&pwq->wait, ep_poll_callback);
 		pwq->whead = whead;
+		// 关联的epitem
 		pwq->base = epi;
+		// pwq插入whead队列，whead由具体资源提供，比如文件，管道，资源满足条件时会pwd对应的回调
+		// 插入EPOLLEXCLUSIVE解决惊群
 		if (epi->event.events & EPOLLEXCLUSIVE)
 			add_wait_queue_exclusive(whead, &pwq->wait);
 		else
 			add_wait_queue(whead, &pwq->wait);
+		// 插入关联的epi队列
 		list_add_tail(&pwq->llink, &epi->pwqlist);
 		epi->nwait++;
 	} else {
@@ -1497,19 +1539,25 @@ static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
 	struct ep_pqueue epq;
 
 	lockdep_assert_irqs_enabled();
-
+	// 监听的文件描述符个数
 	user_watches = atomic_long_read(&ep->user->epoll_watches);
+	// 超了
 	if (unlikely(user_watches >= max_user_watches))
 		return -ENOSPC;
+	// 分配一个epitem
 	if (!(epi = kmem_cache_alloc(epi_cache, GFP_KERNEL)))
 		return -ENOMEM;
 
 	/* Item initialization follow here ... */
+	// 初始化
 	INIT_LIST_HEAD(&epi->rdllink);
 	INIT_LIST_HEAD(&epi->fllink);
 	INIT_LIST_HEAD(&epi->pwqlist);
+	// 所属的epoll
 	epi->ep = ep;
+	// 保存fd和file
 	ep_set_ffd(&epi->ffd, tfile, fd);
+	// 记录订阅事件
 	epi->event = *event;
 	epi->nwait = 0;
 	epi->next = EP_UNACTIVE_PTR;
@@ -1530,6 +1578,7 @@ static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
 	 * Add the current item to the RB tree. All RB tree operations are
 	 * protected by "mtx", and ep_insert() is called with "mtx" held.
 	 */
+	// 插入红黑树
 	ep_rbtree_insert(ep, epi);
 
 	/* now check if we've created too many backpaths */
@@ -1538,7 +1587,9 @@ static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
 		goto error_remove_epi;
 
 	/* Initialize the poll table using the queue callback */
+	// 关联对应的epitem
 	epq.epi = epi;
+	// 初始化ep_pqueue
 	init_poll_funcptr(&epq.pt, ep_ptable_queue_proc);
 
 	/*
@@ -1548,6 +1599,7 @@ static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
 	 * this operation completes, the poll callback can start hitting
 	 * the new item.
 	 */
+	// 判断是否有事件触发了
 	revents = ep_item_poll(epi, &epq.pt, 1);
 
 	/*
@@ -1566,11 +1618,13 @@ static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
 	ep_set_busy_poll_napi_id(epi);
 
 	/* If the file is already "ready" we drop it inside the ready list */
+	// 事件触发了，并且还没有加入就绪队列则加入
 	if (revents && !ep_is_linked(epi)) {
 		list_add_tail(&epi->rdllink, &ep->rdllist);
 		ep_pm_stay_awake(epi);
 
 		/* Notify waiting tasks that events are available */
+		// 等待队列非空则唤醒阻塞在该epoll的队列
 		if (waitqueue_active(&ep->wq))
 			wake_up(&ep->wq);
 		if (waitqueue_active(&ep->poll_wait))
@@ -1578,7 +1632,7 @@ static int ep_insert(struct eventpoll *ep, const struct epoll_event *event,
 	}
 
 	write_unlock_irq(&ep->lock);
-
+	// 监听数加一
 	atomic_long_inc(&ep->user->epoll_watches);
 
 	/* We have to call this outside the lock */
@@ -1634,6 +1688,7 @@ static int ep_modify(struct eventpoll *ep, struct epitem *epi,
 	 * otherwise we might miss an event that happens between the
 	 * f_op->poll() call and the new event set registering.
 	 */
+	// 新的事件
 	epi->event.events = event->events; /* need barrier below */
 	epi->event.data = event->data; /* protected by mtx */
 	if (epi->event.events & EPOLLWAKEUP) {
@@ -1669,13 +1724,16 @@ static int ep_modify(struct eventpoll *ep, struct epitem *epi,
 	 * If the item is "hot" and it is not registered inside the ready
 	 * list, push it inside.
 	 */
+	// 事件是否已经触发
 	if (ep_item_poll(epi, &pt, 1)) {
 		write_lock_irq(&ep->lock);
+		// 还没有加入就绪队列则插入
 		if (!ep_is_linked(epi)) {
 			list_add_tail(&epi->rdllink, &ep->rdllist);
 			ep_pm_stay_awake(epi);
 
 			/* Notify waiting tasks that events are available */
+			// 唤醒等待队列
 			if (waitqueue_active(&ep->wq))
 				wake_up(&ep->wq);
 			if (waitqueue_active(&ep->poll_wait))
@@ -1730,7 +1788,7 @@ static __poll_t ep_send_events_proc(struct eventpoll *ep, struct list_head *head
 				__pm_stay_awake(ep->ws);
 			__pm_relax(ws);
 		}
-
+		// 移出就绪队列
 		list_del_init(&epi->rdllink);
 
 		/*
@@ -1739,6 +1797,7 @@ static __poll_t ep_send_events_proc(struct eventpoll *ep, struct list_head *head
 		 * is holding ep->mtx, so no operations coming from userspace
 		 * can change the item.
 		 */
+		// 触发的事件
 		revents = ep_item_poll(epi, &pt, 1);
 		if (!revents)
 			continue;
@@ -1824,14 +1883,14 @@ static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
 	ktime_t expires, *to = NULL;
 
 	lockdep_assert_irqs_enabled();
-
+	// 设置了阻塞时间
 	if (timeout > 0) {
 		struct timespec64 end_time = ep_set_mstimeout(timeout);
 
 		slack = select_estimate_accuracy(&end_time);
 		to = &expires;
 		*to = timespec64_to_ktime(end_time);
-	} else if (timeout == 0) {
+	} else if (timeout == 0) {// 0说明不阻塞
 		/*
 		 * Avoid the unnecessary trip to the wait queue loop, if the
 		 * caller specified a non blocking operation. We still need
@@ -1842,6 +1901,7 @@ static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
 		timed_out = 1;
 
 		write_lock_irq(&ep->lock);
+		// 是否有就绪事件
 		eavail = ep_events_available(ep);
 		write_unlock_irq(&ep->lock);
 
@@ -1852,8 +1912,9 @@ fetch_events:
 
 	if (!ep_events_available(ep))
 		ep_busy_loop(ep, timed_out);
-
+	// 是否有就绪事件
 	eavail = ep_events_available(ep);
+	// 有则通知用户
 	if (eavail)
 		goto send_events;
 
@@ -1876,6 +1937,17 @@ fetch_events:
 		 * explicitly, thus ep->lock is not taken, which halts the
 		 * event delivery.
 		 */
+		/*
+			初始化wait，保存上下文 => 当前进程
+			#define init_wait(wait)								\
+			do {									\
+				(wait)->private = current;					\
+				(wait)->func = autoremove_wake_function;			\
+				INIT_LIST_HEAD(&(wait)->entry);					\
+				(wait)->flags = 0;						\
+			} while (0)
+
+		*/
 		init_wait(&wait);
 
 		write_lock_irq(&ep->lock);
@@ -1893,7 +1965,9 @@ fetch_events:
 		 * period of time although events are pending, so lock is
 		 * important.
 		 */
+		// 是否有就绪队列
 		eavail = ep_events_available(ep);
+		// 没有但是当前有信号需要处理则返回EINTR，否则把当前进程加入队列
 		if (!eavail) {
 			if (signal_pending(current))
 				res = -EINTR;
@@ -1901,10 +1975,10 @@ fetch_events:
 				__add_wait_queue_exclusive(&ep->wq, &wait);
 		}
 		write_unlock_irq(&ep->lock);
-
+		// 报错或者有就绪事件则break
 		if (eavail || res)
 			break;
-
+		// 阻塞当前进程
 		if (!schedule_hrtimeout_range(to, slack, HRTIMER_MODE_ABS)) {
 			timed_out = 1;
 			break;
@@ -1914,9 +1988,9 @@ fetch_events:
 		eavail = 1;
 
 	} while (0);
-
+	// 进程继续执行
 	__set_current_state(TASK_RUNNING);
-
+	// 当前进程还在队列（阻塞队列）则移除，因为进程被唤醒了
 	if (!list_empty_careful(&wait.entry)) {
 		write_lock_irq(&ep->lock);
 		__remove_wait_queue(&ep->wq, &wait);
@@ -1938,6 +2012,7 @@ send_events:
 	 * there's still timeout left over, we go trying again in search of
 	 * more luck.
 	 */
+	// 没有报错并且有就绪事件，通知用户
 	if (!res && eavail &&
 	    !(res = ep_send_events(ep, events, maxevents)) && !timed_out)
 		goto fetch_events;
@@ -2045,12 +2120,13 @@ static int do_epoll_create(int flags)
 
 	/* Check the EPOLL_* constant for consistency.  */
 	BUILD_BUG_ON(EPOLL_CLOEXEC != O_CLOEXEC);
-
+	// 只支持CLOEXEC
 	if (flags & ~EPOLL_CLOEXEC)
 		return -EINVAL;
 	/*
 	 * Create the internal data structure ("struct eventpoll").
 	 */
+	// 分配一个eventpoll
 	error = ep_alloc(&ep);
 	if (error < 0)
 		return error;
@@ -2058,18 +2134,22 @@ static int do_epoll_create(int flags)
 	 * Creates all the items needed to setup an eventpoll file. That is,
 	 * a file structure and a free file descriptor.
 	 */
+	// 获取一个空闲文件描述符
 	fd = get_unused_fd_flags(O_RDWR | (flags & O_CLOEXEC));
 	if (fd < 0) {
 		error = fd;
 		goto out_free_ep;
 	}
+	// 获取一个file，并且关联eventpoll_fops和上下文ep
 	file = anon_inode_getfile("[eventpoll]", &eventpoll_fops, ep,
 				 O_RDWR | (flags & O_CLOEXEC));
 	if (IS_ERR(file)) {
 		error = PTR_ERR(file);
 		goto out_free_fd;
 	}
+	// ep和file关联起来，上面是file和ep关联
 	ep->file = file;
+	// 关联fd和file
 	fd_install(fd, file);
 	return fd;
 
@@ -2104,7 +2184,7 @@ static inline int epoll_mutex_lock(struct mutex *mutex, int depth,
 		return 0;
 	return -EAGAIN;
 }
-
+// 操作epoll
 int do_epoll_ctl(int epfd, int op, int fd, struct epoll_event *epds,
 		 bool nonblock)
 {
@@ -2116,17 +2196,20 @@ int do_epoll_ctl(int epfd, int op, int fd, struct epoll_event *epds,
 	struct eventpoll *tep = NULL;
 
 	error = -EBADF;
+	// 根据fd找到对应的数据结构
 	f = fdget(epfd);
 	if (!f.file)
 		goto error_return;
 
 	/* Get the "struct file *" for the target file */
+	// 获取被操作的文件描述符的数据结构
 	tf = fdget(fd);
 	if (!tf.file)
 		goto error_fput;
 
 	/* The target file descriptor must support poll */
 	error = -EPERM;
+	// 资源有没有实现poll接口
 	if (!file_can_poll(tf.file))
 		goto error_tgt_fput;
 
@@ -2140,6 +2223,7 @@ int do_epoll_ctl(int epfd, int op, int fd, struct epoll_event *epds,
 	 * adding an epoll file descriptor inside itself.
 	 */
 	error = -EINVAL;
+	// 保证被操作的fd不是自己，并且不是另一个epoll
 	if (f.file == tf.file || !is_file_epoll(f.file))
 		goto error_tgt_fput;
 
@@ -2160,6 +2244,7 @@ int do_epoll_ctl(int epfd, int op, int fd, struct epoll_event *epds,
 	 * At this point it is safe to assume that the "private_data" contains
 	 * our own data structure.
 	 */
+	// 根据fd找到epoll数据结构
 	ep = f.file->private_data;
 
 	/*
@@ -2177,9 +2262,11 @@ int do_epoll_ctl(int epfd, int op, int fd, struct epoll_event *epds,
 	 * deep wakeup paths from forming in parallel through multiple
 	 * EPOLL_CTL_ADD operations.
 	 */
+	// 加锁
 	error = epoll_mutex_lock(&ep->mtx, 0, nonblock);
 	if (error)
 		goto error_tgt_fput;
+	// 新增
 	if (op == EPOLL_CTL_ADD) {
 		if (!list_empty(&f.file->f_ep_links) ||
 				ep->gen == loop_check_gen ||
@@ -2218,24 +2305,32 @@ int do_epoll_ctl(int epfd, int op, int fd, struct epoll_event *epds,
 	 * above, we can be sure to be able to use the item looked up by
 	 * ep_find() till we release the mutex.
 	 */
+	// 判断fd是否已经存在epoll
 	epi = ep_find(ep, tf.file, fd);
 
 	error = -EINVAL;
 	switch (op) {
+	// 新增
 	case EPOLL_CTL_ADD:
+		// 之前没有则可以新增，否则报错
 		if (!epi) {
 			epds->events |= EPOLLERR | EPOLLHUP;
+			// 插入epoll
 			error = ep_insert(ep, epds, tf.file, fd, full_check);
 		} else
 			error = -EEXIST;
 		break;
+	// 删除
 	case EPOLL_CTL_DEL:
+		// 存在则删除，否则报错
 		if (epi)
 			error = ep_remove(ep, epi);
 		else
 			error = -ENOENT;
 		break;
+	// 修改
 	case EPOLL_CTL_MOD:
+		// 存在则修改，否则报错
 		if (epi) {
 			if (!(epi->event.events & EPOLLEXCLUSIVE)) {
 				epds->events |= EPOLLERR | EPOLLHUP;
@@ -2273,7 +2368,7 @@ SYSCALL_DEFINE4(epoll_ctl, int, epfd, int, op, int, fd,
 		struct epoll_event __user *, event)
 {
 	struct epoll_event epds;
-
+	// 判断是否需要复制数据，如果是删除则不需要，根据fd删除就行
 	if (ep_op_has_event(op) &&
 	    copy_from_user(&epds, event, sizeof(struct epoll_event)))
 		return -EFAULT;
@@ -2301,6 +2396,7 @@ static int do_epoll_wait(int epfd, struct epoll_event __user *events,
 		return -EFAULT;
 
 	/* Get the "struct file *" for the eventpoll file */
+	//  通过fd拿到底层的数据结构
 	f = fdget(epfd);
 	if (!f.file)
 		return -EBADF;
@@ -2310,6 +2406,7 @@ static int do_epoll_wait(int epfd, struct epoll_event __user *events,
 	 * the user passed to us _is_ an eventpoll file.
 	 */
 	error = -EINVAL;
+	// 判断是不是epoll
 	if (!is_file_epoll(f.file))
 		goto error_fput;
 
@@ -2317,9 +2414,11 @@ static int do_epoll_wait(int epfd, struct epoll_event __user *events,
 	 * At this point it is safe to assume that the "private_data" contains
 	 * our own data structure.
 	 */
+	// 取得epoll的核心结构体
 	ep = f.file->private_data;
 
 	/* Time to fish for events ... */
+	// poll
 	error = ep_poll(ep, events, maxevents, timeout);
 
 error_fput:
