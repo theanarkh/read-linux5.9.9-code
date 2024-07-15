@@ -913,10 +913,11 @@ int inet_csk_listen_start(struct sock *sk, int backlog)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct inet_sock *inet = inet_sk(sk);
 	int err = -EADDRINUSE;
-
+	// 初始化
 	reqsk_queue_alloc(&icsk->icsk_accept_queue);
-
+	// 当前的连接数
 	sk->sk_ack_backlog = 0;
+	// 初始化延迟 ack 字段
 	inet_csk_delack_init(sk);
 
 	/* There is race window here: we announce ourselves listening,
@@ -924,7 +925,9 @@ int inet_csk_listen_start(struct sock *sk, int backlog)
 	 * It is OK, because this socket enters to hash table only
 	 * after validation is complete.
 	 */
+	// 修改 socket 状态为 listne
 	inet_sk_state_store(sk, TCP_LISTEN);
+
 	if (!sk->sk_prot->get_port(sk, inet->inet_num)) {
 		inet->inet_sport = htons(inet->inet_num);
 
@@ -934,7 +937,7 @@ int inet_csk_listen_start(struct sock *sk, int backlog)
 		if (likely(!err))
 			return 0;
 	}
-
+	// 没有成功，改成 close 状态并返回错误
 	inet_sk_set_state(sk, TCP_CLOSE);
 	return err;
 }
@@ -1023,6 +1026,7 @@ void inet_csk_listen_stop(struct sock *sk)
 	 * To be honest, we are not able to make either
 	 * of the variants now.			--ANK
 	 */
+	// 遍历已完成三次握手但是应用层还没 accept 的队列
 	while ((req = reqsk_queue_remove(queue, sk)) != NULL) {
 		struct sock *child = req->sk;
 
@@ -1032,6 +1036,7 @@ void inet_csk_listen_stop(struct sock *sk)
 		sock_hold(child);
 
 		inet_child_forget(sk, req, child);
+		// 销毁
 		reqsk_put(req);
 		bh_unlock_sock(child);
 		local_bh_enable();

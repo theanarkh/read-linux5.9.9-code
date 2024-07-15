@@ -137,6 +137,7 @@ static void reuseport_free_rcu(struct rcu_head *head)
  *
  *  May return ENOMEM and not add socket to group under memory pressure.
  */
+// socket 加入 reuseport 队列
 int reuseport_add_sock(struct sock *sk, struct sock *sk2, bool bind_inany)
 {
 	struct sock_reuseport *old_reuse, *reuse;
@@ -287,6 +288,7 @@ struct sock *reuseport_select_sock(struct sock *sk,
 
 select_by_hash:
 		/* no bpf or invalid bpf result: fall back to hash usage */
+		// 随机找一个 socket
 		if (!sk2) {
 			int i, j;
 

@@ -240,11 +240,13 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 		unsigned int rand;
 		unsigned short first, last;
 		DECLARE_BITMAP(bitmap, PORTS_PER_CHAIN);
-
+		// 获取可用端口范围
 		inet_get_local_port_range(net, &low, &high);
+		// 剩下可用的端口数
 		remaining = (high - low) + 1;
-
+		// 随机数
 		rand = prandom_u32();
+		// 获取一个可用的端口
 		first = reciprocal_scale(rand, remaining) + low;
 		/*
 		 * force rand to be an odd multiple of UDP_HTABLE_SIZE
@@ -267,17 +269,19 @@ int udp_lib_get_port(struct sock *sk, unsigned short snum,
 			do {
 				if (low <= snum && snum <= high &&
 				    !test_bit(snum >> udptable->log, bitmap) &&
-				    !inet_is_local_reserved_port(net, snum))
+				    !inet_is_local_reserved_port(net, snum)) // 不是保留端口
 					goto found;
-				snum += rand;
+				snum += rand; // 没有合适的继续找
 			} while (snum != first);
 			spin_unlock_bh(&hslot->lock);
 			cond_resched();
 		} while (++first != last);
 		goto fail;
 	} else {
+		// 根据端口找到对应的 slot
 		hslot = udp_hashslot(udptable, net, snum);
 		spin_lock_bh(&hslot->lock);
+		// 如果该 slot 的链表节点数已经超过 10 个则放到第二个哈希表，避免搜索时间过长
 		if (hslot->count > 10) {
 			int exist;
 			unsigned int slot2 = udp_sk(sk)->udp_portaddr_hash ^ snum;
@@ -309,7 +313,9 @@ found:
 	inet_sk(sk)->inet_num = snum;
 	udp_sk(sk)->udp_port_hash = snum;
 	udp_sk(sk)->udp_portaddr_hash ^= snum;
+	// socket 是否已经加入哈希表
 	if (sk_unhashed(sk)) {
+		// 设置了 reuseport，则把 socket 加入到 reuseport 队列
 		if (sk->sk_reuseport &&
 		    udp_reuseport_add_sock(sk, hslot)) {
 			inet_sk(sk)->inet_num = 0;
@@ -354,7 +360,7 @@ int udp_v4_get_port(struct sock *sk, unsigned short snum)
 	udp_sk(sk)->udp_portaddr_hash = hash2_partial;
 	return udp_lib_get_port(sk, snum, hash2_nulladdr);
 }
-// 匹配socket的算法
+// 收到数据时，匹配socket的算法
 static int compute_score(struct sock *sk, struct net *net,
 			 __be32 saddr, __be16 sport,
 			 __be32 daddr, unsigned short hnum,
@@ -368,20 +374,23 @@ static int compute_score(struct sock *sk, struct net *net,
 	    udp_sk(sk)->udp_port_hash != hnum ||
 	    ipv6_only_sock(sk))
 		return -1;
-
+	// 数据包的目的地址和当前 socket 的源地址不一样
 	if (sk->sk_rcv_saddr != daddr)
 		return -1;
 
 	score = (sk->sk_family == PF_INET) ? 2 : 1;
 
 	inet = inet_sk(sk);
+	// 有目的地址
 	if (inet->inet_daddr) {
+		// socket 的目的地址和的数据包的源地址不一样
 		if (inet->inet_daddr != saddr)
 			return -1;
 		score += 4;
 	}
-
+	// 有目的端口
 	if (inet->inet_dport) {
+		// socket 的目的端口和数据包的源端口不一样
 		if (inet->inet_dport != sport)
 			return -1;
 		score += 4;
@@ -409,7 +418,7 @@ static u32 udp_ehashfn(const struct net *net, const __be32 laddr,
 	return __inet_ehashfn(laddr, lport, faddr, fport,
 			      udp_ehash_secret + net_hash_mix(net));
 }
-
+// 从监听 socket 的 reuseport 队列中找到一个 socket
 static struct sock *lookup_reuseport(struct net *net, struct sock *sk,
 				     struct sk_buff *skb,
 				     __be32 saddr, __be16 sport,
@@ -417,7 +426,7 @@ static struct sock *lookup_reuseport(struct net *net, struct sock *sk,
 {
 	struct sock *reuse_sk = NULL;
 	u32 hash;
-
+	// socket 设置了 reuseport 标记并且不等于 TCP_ESTABLISHED 状态，监听型的 socket 才会使用 reuseport
 	if (sk->sk_reuseport && sk->sk_state != TCP_ESTABLISHED) {
 		hash = udp_ehashfn(net, daddr, hnum, saddr, sport);
 		reuse_sk = reuseport_select_sock(sk, hash, skb,
@@ -442,13 +451,15 @@ static struct sock *udp4_lib_lookup2(struct net *net,
 	udp_portaddr_for_each_entry_rcu(sk, &hslot2->head) {
 		score = compute_score(sk, net, saddr, sport,
 				      daddr, hnum, dif, sdif);
+		// 找到了更合适的结果
 		if (score > badness) {
+			//
 			result = lookup_reuseport(net, sk, skb,
 						  saddr, sport, daddr, hnum);
 			/* Fall back to scoring if group has connections */
 			if (result && !reuseport_has_conns(sk, false))
 				return result;
-
+			// 记录对应最好结果的 socket
 			result = result ? : sk;
 			badness = score;
 		}
@@ -496,6 +507,7 @@ struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
 	hslot2 = &udptable->hash2[slot2];
 
 	/* Lookup connected or non-wildcard socket */
+	// 查找精确匹配的 socket
 	result = udp4_lib_lookup2(net, saddr, sport,
 				  daddr, hnum, dif, sdif,
 				  hslot2, skb);
@@ -517,6 +529,7 @@ struct sock *__udp4_lib_lookup(struct net *net, __be32 saddr,
 		goto done;
 
 	/* Lookup wildcard sockets */
+	// 查找绑定了所有本机 IP 的 socket
 	hash2 = ipv4_portaddr_hash(net, htonl(INADDR_ANY), hnum);
 	slot2 = hash2 & udptable->mask;
 	hslot2 = &udptable->hash2[slot2];
@@ -765,19 +778,20 @@ int __udp4_lib_err(struct sk_buff *skb, u32 info, struct udp_table *udptable)
 		/* ...not for tunnels though: we don't have a sending socket */
 		goto out;
 	}
+	// 没有设置接收错误信息的标记 ERRQUEUE
 	if (!inet->recverr) {
 		if (!harderr || sk->sk_state != TCP_ESTABLISHED)
 			goto out;
 	} else
 		ip_icmp_error(sk, skb, err, uh->dest, info, (u8 *)(uh+1));
-
+	// 记录错误，下次 read 的时候返回
 	sk->sk_err = err;
 	// 通知（唤醒）socket
 	sk->sk_error_report(sk);
 out:
 	return 0;
 }
-// icmp回调
+// icmp 回调
 int udp_err(struct sk_buff *skb, u32 info)
 {
 	return __udp4_lib_err(skb, info, &udp_table);
@@ -870,6 +884,7 @@ void udp_set_csum(bool nocheck, struct sk_buff *skb,
 }
 EXPORT_SYMBOL(udp_set_csum);
 
+// 发送一个数据包
 static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4,
 			struct inet_cork *cork)
 {
@@ -887,8 +902,10 @@ static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4,
 	 * Create a UDP header
 	 */
 	uh = udp_hdr(skb);
+	// 源 IP 目的 IP
 	uh->source = inet->inet_sport;
 	uh->dest = fl4->fl4_dport;
+	// 数据包长度
 	uh->len = htons(len);
 	uh->check = 0;
 
@@ -941,12 +958,14 @@ csum_partial:
 		csum = udp_csum(skb);
 
 	/* add protocol-dependent pseudo-header */
+	// 校验和
 	uh->check = csum_tcpudp_magic(fl4->saddr, fl4->daddr, len,
 				      sk->sk_protocol, csum);
 	if (uh->check == 0)
 		uh->check = CSUM_MANGLED_0;
 
 send:
+	// 调 IP 层发送
 	err = ip_send_skb(sock_net(sk), skb);
 	if (err) {
 		if (err == -ENOBUFS && !inet->recverr) {
@@ -1042,7 +1061,7 @@ int udp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	int (*getfrag)(void *, char *, int, int, int, struct sk_buff *);
 	struct sk_buff *skb;
 	struct ip_options_data opt_copy;
-
+	
 	if (len > 0xFFFF)
 		return -EMSGSIZE;
 
@@ -3126,7 +3145,7 @@ __setup("uhash_entries=", set_uhash_entries);
 void __init udp_table_init(struct udp_table *table, const char *name)
 {
 	unsigned int i;
-
+	// 分配两个哈希表
 	table->hash = alloc_large_system_hash(name,
 					      2 * sizeof(struct udp_hslot),
 					      uhash_entries,

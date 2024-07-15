@@ -199,21 +199,24 @@ int inet_listen(struct socket *sock, int backlog)
 	struct sock *sk = sock->sk;
 	unsigned char old_state;
 	int err, tcp_fastopen;
-
+	// 加锁
 	lock_sock(sk);
 
 	err = -EINVAL;
+	// 流式 socket 才能调用 listen
 	if (sock->state != SS_UNCONNECTED || sock->type != SOCK_STREAM)
 		goto out;
 
 	old_state = sk->sk_state;
+	// 状态需要等于 close 或 listen 
 	if (!((1 << old_state) & (TCPF_CLOSE | TCPF_LISTEN)))
 		goto out;
-
+	// 修改连接队列阈值
 	WRITE_ONCE(sk->sk_max_ack_backlog, backlog);
 	/* Really, if the socket is already in listen state
 	 * we can only allow the backlog to be adjusted.
 	 */
+	// 如果是 close 状态则修改状态，如果 listen 状态则只能修改连接队列的阈值，下面的代码就不会执行
 	if (old_state != TCP_LISTEN) {
 		/* Enable TFO w/o requiring TCP_FASTOPEN socket option.
 		 * Note that only TCP sockets (SOCK_STREAM) will reach here.
@@ -228,6 +231,7 @@ int inet_listen(struct socket *sock, int backlog)
 			fastopen_queue_tune(sk, backlog);
 			tcp_fastopen_init_key_once(sock_net(sk));
 		}
+		// 初始化 socket 字段并修改为 listen 状态
 		err = inet_csk_listen_start(sk, backlog);
 		if (err)
 			goto out;
@@ -371,6 +375,7 @@ lookup_protocol:
 		 */
 		inet->inet_sport = htons(inet->inet_num);
 		/* Add to protocol hash chains. */
+		// 把 socket 放到池子中
 		err = sk->sk_prot->hash(sk);
 		if (err) {
 			sk_common_release(sk);
@@ -417,6 +422,7 @@ int inet_release(struct socket *sock)
 			BPF_CGROUP_RUN_PROG_INET_SOCK_RELEASE(sk);
 
 		/* Applications forget to leave groups before exiting */
+		// 离开多播组
 		ip_mc_drop_socket(sk);
 
 		/* If linger is set, we don't return until the close
@@ -427,6 +433,7 @@ int inet_release(struct socket *sock)
 		 * linger..
 		 */
 		timeout = 0;
+		// 如果 socket 设置了 SOCK_LINGER 并且进程还没退出则执行 close 钩子
 		if (sock_flag(sk, SOCK_LINGER) &&
 		    !(current->flags & PF_EXITING))
 			timeout = sk->sk_lingertime;
@@ -443,7 +450,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	int err;
 
 	/* If the socket has its own bind function then use it. (RAW) */
-	// tcp、udp没有实现bind
+	// tcp、udp 没有实现 bind
 	if (sk->sk_prot->bind) {
 		return sk->sk_prot->bind(sk, uaddr, addr_len);
 	}
@@ -502,6 +509,7 @@ int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 
 	snum = ntohs(addr->sin_port);
 	err = -EACCES;
+	// 端口小雨 1024 需要有权限才能绑定
 	if (snum && inet_port_requires_bind_service(net, snum) &&
 	    !ns_capable(net->user_ns, CAP_NET_BIND_SERVICE))
 		goto out;
@@ -518,10 +526,12 @@ int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 
 	/* Check these errors (active socket, double bind). */
 	err = -EINVAL;
+	// 已经存在端口了
 	if (sk->sk_state != TCP_CLOSE || inet->inet_num)
 		goto out_release_sock;
 
 	inet->inet_rcv_saddr = inet->inet_saddr = addr->sin_addr.s_addr;
+	// IP 是广播或多播类型
 	if (chk_addr_ret == RTN_MULTICAST || chk_addr_ret == RTN_BROADCAST)
 		inet->inet_saddr = 0;  /* Use device */
 
@@ -547,7 +557,9 @@ int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 		sk->sk_userlocks |= SOCK_BINDADDR_LOCK;
 	if (snum)
 		sk->sk_userlocks |= SOCK_BINDPORT_LOCK;
+	// 绑定成功记录源端口
 	inet->inet_sport = htons(inet->inet_num);
+	// 还没有目的地址信息
 	inet->inet_daddr = 0;
 	inet->inet_dport = 0;
 	sk_dst_reset(sk);
@@ -567,6 +579,7 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 
 	if (addr_len < sizeof(uaddr->sa_family))
 		return -EINVAL;
+	// UDP 支持清除之前通过 connect 绑定的目的地址，通过设置 sa_family 为 AF_UNSPEC
 	if (uaddr->sa_family == AF_UNSPEC)
 		return sk->sk_prot->disconnect(sk, flags);
 
@@ -578,14 +591,16 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 	// 没有端口则自动选择一个
 	if (!inet_sk(sk)->inet_num && inet_autobind(sk))
 		return -EAGAIN;
+	// 调传输层接口
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
 }
 EXPORT_SYMBOL(inet_dgram_connect);
 
+// 等待三次握手完成
 static long inet_wait_for_connect(struct sock *sk, long timeo, int writebias)
 {
 	DEFINE_WAIT_FUNC(wait, woken_wake_function);
-
+	// 把当前线程加入到 socket 的等待队列
 	add_wait_queue(sk_sleep(sk), &wait);
 	sk->sk_write_pending += writebias;
 
@@ -594,14 +609,17 @@ static long inet_wait_for_connect(struct sock *sk, long timeo, int writebias)
 	 * Connect() does not allow to get error notifications
 	 * without closing the socket.
 	 */
+	// 如果还没有完成三次握手，则阻塞等待（支持超时）
 	while ((1 << sk->sk_state) & (TCPF_SYN_SENT | TCPF_SYN_RECV)) {
 		release_sock(sk);
-		// 阻塞
+		// 阻塞等待，见 kernel/sched/wait.c 的 wait_woken
 		timeo = wait_woken(&wait, TASK_INTERRUPTIBLE, timeo);
 		lock_sock(sk);
+		// 如果有信号或者超时了，则 break 回到调用者
 		if (signal_pending(current) || !timeo)
 			break;
 	}
+	// 移出等待队列
 	remove_wait_queue(sk_sleep(sk), &wait);
 	sk->sk_write_pending -= writebias;
 	return timeo;
@@ -611,6 +629,7 @@ static long inet_wait_for_connect(struct sock *sk, long timeo, int writebias)
  *	Connect to a remote host. There is regrettably still a little
  *	TCP 'magic' in here.
  */
+// 三次握手过程
 int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 			  int addr_len, int flags, int is_sendmsg)
 {
@@ -627,10 +646,11 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 	 * write() will invoke tcp_sendmsg_fastopen() which calls
 	 * __inet_stream_connect().
 	 */
+	// 目的地址
 	if (uaddr) {
 		if (addr_len < sizeof(uaddr->sa_family))
 			return -EINVAL;
-
+		// 清除目的地址
 		if (uaddr->sa_family == AF_UNSPEC) {
 			err = sk->sk_prot->disconnect(sk, flags);
 			sock->state = err ? SS_DISCONNECTING : SS_UNCONNECTED;
@@ -642,9 +662,11 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 	default:
 		err = -EINVAL;
 		goto out;
+	// 不能重复连接
 	case SS_CONNECTED:
 		err = -EISCONN;
 		goto out;
+	// 正在连接中
 	case SS_CONNECTING:
 		if (inet_sk(sk)->defer_connect)
 			err = is_sendmsg ? -EINPROGRESS : -EISCONN;
@@ -662,11 +684,11 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 			if (err)
 				goto out;
 		}
-
+		// 调传输层接口
 		err = sk->sk_prot->connect(sk, uaddr, addr_len);
 		if (err < 0)
 			goto out;
-
+		// 设置为正在连接状态
 		sock->state = SS_CONNECTING;
 
 		if (!err && inet_sk(sk)->defer_connect)
@@ -688,10 +710,10 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 				tcp_sk(sk)->fastopen_req->data ? 1 : 0;
 
 		/* Error code is set above */
-		// timeo说明非阻塞，否则执行inet_wait_for_connect进入阻塞逻辑
+		// timeo非零说明非阻塞，否则执行 inet_wait_for_connect 进入阻塞逻辑
 		if (!timeo || !inet_wait_for_connect(sk, timeo, writebias))
 			goto out;
-
+		// 判断错误码
 		err = sock_intr_errno(timeo);
 		if (signal_pending(current))
 			goto out;
@@ -722,6 +744,7 @@ sock_error:
 }
 EXPORT_SYMBOL(__inet_stream_connect);
 
+// 三次握手
 int inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 			int addr_len, int flags)
 {
@@ -737,13 +760,13 @@ EXPORT_SYMBOL(inet_stream_connect);
 /*
  *	Accept a pending connection. The TCP layer now gives BSD semantics.
  */
-
+// 从已完成三次握手的队列中获取一个节点
 int inet_accept(struct socket *sock, struct socket *newsock, int flags,
 		bool kern)
 {
 	struct sock *sk1 = sock->sk;
 	int err = -EINVAL;
-	// 返回通信socket
+	// 获取一个通信 socket
 	struct sock *sk2 = sk1->sk_prot->accept(sk1, flags, &err, kern);
 
 	if (!sk2)
@@ -769,6 +792,7 @@ EXPORT_SYMBOL(inet_accept);
 /*
  *	This does both peername and sockname.
  */
+// 获取 socket 源和目的地址信息
 int inet_getname(struct socket *sock, struct sockaddr *uaddr,
 		 int peer)
 {
@@ -777,11 +801,14 @@ int inet_getname(struct socket *sock, struct sockaddr *uaddr,
 	DECLARE_SOCKADDR(struct sockaddr_in *, sin, uaddr);
 
 	sin->sin_family = AF_INET;
+	// 获取目的地址信息
 	if (peer) {
+		// 没有目的端口或 socket 不是处于连接状态则报错
 		if (!inet->inet_dport ||
 		    (((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_SYN_SENT)) &&
 		     peer == 1))
 			return -ENOTCONN;
+		// 获取目的地址信息
 		sin->sin_port = inet->inet_dport;
 		sin->sin_addr.s_addr = inet->inet_daddr;
 	} else {
@@ -891,6 +918,7 @@ int inet_shutdown(struct socket *sock, int how)
 		   EPOLLHUP, even on eg. unconnected UDP sockets -- RR */
 		fallthrough;
 	default:
+		// 设置关闭标记
 		sk->sk_shutdown |= how;
 		if (sk->sk_prot->shutdown)
 			sk->sk_prot->shutdown(sk, how);
@@ -1732,6 +1760,7 @@ static const struct net_protocol igmp_protocol = {
 /* thinking of making this const? Don't.
  * early_demux can change based on sysctl.
  */
+// 给底层协议使用的数据结构，比如 IP 层使用钩子函数上报数据
 static struct net_protocol tcp_protocol = {
 	.early_demux	=	tcp_v4_early_demux,
 	.early_demux_handler =  tcp_v4_early_demux,
@@ -1844,6 +1873,7 @@ static __net_init int inet_init_net(struct net *net)
 	/*
 	 * Set defaults for local port range
 	 */
+	// 本地端口范围
 	seqlock_init(&net->ipv4.ip_local_ports.lock);
 	net->ipv4.ip_local_ports.range[0] =  32768;
 	net->ipv4.ip_local_ports.range[1] =  60999;

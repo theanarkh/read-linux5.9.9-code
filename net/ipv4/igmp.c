@@ -2664,16 +2664,18 @@ void ip_mc_drop_socket(struct sock *sk)
 	struct inet_sock *inet = inet_sk(sk);
 	struct ip_mc_socklist *iml;
 	struct net *net = sock_net(sk);
-
+	// 没有加入多播组则返回
 	if (!inet->mc_list)
 		return;
 
 	rtnl_lock();
+	// 遍历加入的多播组
 	while ((iml = rtnl_dereference(inet->mc_list)) != NULL) {
 		struct in_device *in_dev;
 
 		inet->mc_list = iml->next_rcu;
 		in_dev = inetdev_by_index(net, iml->multi.imr_ifindex);
+		// 离开多播组
 		(void) ip_mc_leave_src(sk, iml, in_dev);
 		if (in_dev)
 			ip_mc_dec_group(in_dev, iml->multi.imr_multiaddr.s_addr);

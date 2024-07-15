@@ -422,12 +422,12 @@ void ip_icmp_error(struct sock *sk, struct sk_buff *skb, int err,
 	serr->addr_offset = (u8 *)&(((struct iphdr *)(icmp_hdr(skb) + 1))->daddr) -
 				   skb_network_header(skb);
 	serr->port = port;
-
 	if (skb_pull(skb, payload - skb->data)) {
 		if (inet_sk(sk)->recverr_rfc4884)
 			ipv4_icmp_error_rfc4884(skb, &serr->ee.ee_rfc4884);
 
 		skb_reset_transport_header(skb);
+		// 把错误插入 socket 的错误队列
 		if (sock_queue_err_skb(sk, skb) == 0)
 			return;
 	}

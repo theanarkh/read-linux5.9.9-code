@@ -2415,11 +2415,13 @@ void tcp_close(struct sock *sk, long timeout)
 
 	lock_sock(sk);
 	sk->sk_shutdown = SHUTDOWN_MASK;
-
+	// 监听型 socket
 	if (sk->sk_state == TCP_LISTEN) {
+		// 设置为 close 状态，不能再接收连接
 		tcp_set_state(sk, TCP_CLOSE);
 
 		/* Special case. */
+		// 处理已完成但应用层还没有处理的连接
 		inet_csk_listen_stop(sk);
 
 		goto adjudge_to_death;
@@ -2429,6 +2431,7 @@ void tcp_close(struct sock *sk, long timeout)
 	 *  descriptor close, not protocol-sourced closes, because the
 	 *  reader process may not have drained the data yet!
 	 */
+	// 通信型 socket，是否数据对应的内存
 	while ((skb = __skb_dequeue(&sk->sk_receive_queue)) != NULL) {
 		u32 len = TCP_SKB_CB(skb)->end_seq - TCP_SKB_CB(skb)->seq;
 
@@ -2494,7 +2497,7 @@ void tcp_close(struct sock *sk, long timeout)
 		 */
 		tcp_send_fin(sk);
 	}
-
+	// 阻塞等待
 	sk_stream_wait_close(sk, timeout);
 
 adjudge_to_death:
